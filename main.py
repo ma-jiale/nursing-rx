@@ -20,8 +20,8 @@ app.secret_key = 'ezdose-secret-key-change-in-production'  # Session密钥，生
 # ========================================
 # Set to empty string for local development
 # Set to '/flask' for remote deployment to handle reverse proxy routing
-URL_PREFIX = ''  # Local development mode
-# URL_PREFIX = '/flask'  # Uncomment this line for remote deployment
+# URL_PREFIX = ''  # Local development mode
+URL_PREFIX = '/nursing-rx'  # Uncomment this line for remote deployment
 
 # ========================================
 # File Path Configuration
