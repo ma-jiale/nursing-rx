@@ -21,6 +21,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
+from reportlab.graphics.barcode import code128
 
 # Register Chinese TrueType Font (Windows / Linux system fonts)
 font_registered = False
@@ -46,12 +47,14 @@ if not font_registered:
 
 class DashedLabelFlowable(Flowable):
     """
-    Custom Flowable to draw a square label with a dashed border outline
-    and patient's name vertically and horizontally centered.
+    Custom Flowable to draw a square label with a solid border outline,
+    the patient's name, and their patient ID barcode.
     """
-    def __init__(self, name, width, height, font_name, font_size=12):
+    def __init__(self, patient_id, name, bed_number, width, height, font_name, font_size=12):
         Flowable.__init__(self)
+        self.patient_id = patient_id
         self.name = name
+        self.bed_number = bed_number
         self.width = width
         self.height = height
         self.font_name = font_name
@@ -63,26 +66,70 @@ class DashedLabelFlowable(Flowable):
     def draw(self):
         self.canv.saveState()
         
-        # Set solid line properties for the border
+        # 1. Set solid line properties for the border
         self.canv.setStrokeColor(colors.HexColor('#CCCCCC'))
         self.canv.setLineWidth(0.5)
         
         # Draw the rectangle exactly on the boundary so adjacent cells share a border (zero gaps)
         self.canv.rect(0, 0, self.width, self.height)
         
-        # Draw patient name (centered)
-        self.canv.setFont(self.font_name, self.font_size)
-        self.canv.setFillColor(colors.black)
+        # 2. Draw bold patient name (centered horizontally in upper area)
+        # Shifted up to 17.3mm to accommodate slightly larger font size (11pt) and faux bold stroke
+        self.canv.saveState()
+        self.canv.setStrokeColor(colors.black)
+        self.canv.setLineWidth(0.2) # Stroke line width for faux bold
         
-        # Calculate text width to center horizontally
-        text_width = self.canv.stringWidth(self.name, self.font_name, self.font_size)
-        x = (self.width - text_width) / 2
+        text_name = self.canv.beginText()
+        text_name.setTextRenderMode(2) # Fill and Stroke (faux bold)
+        text_name.setFont(self.font_name, 11)
+        text_width = self.canv.stringWidth(self.name, self.font_name, 11)
+        name_x = (self.width - text_width) / 2
+        text_name.setTextOrigin(name_x, 17.3 * mm)
+        text_name.textOut(self.name)
+        self.canv.drawText(text_name)
         
-        # Calculate Y for centering vertically
-        # Standard cap height of font is approx 0.7 * font_size
-        y = (self.height - self.font_size * 0.7) / 2
+        # 2.5 Draw bold bed number (centered horizontally between barcode and name, only showing digits)
+        # Positioned at 11.7mm to be mathematically centered between barcode top (9.9mm) and name baseline (17.3mm)
+        bed_str = ''.join(c for c in str(self.bed_number) if c.isdigit())
+        if not bed_str:
+            bed_str = str(self.bed_number)
         
-        self.canv.drawString(x, y, self.name)
+        text_bed = self.canv.beginText()
+        text_bed.setTextRenderMode(2) # Fill and Stroke (faux bold)
+        text_bed.setFont(self.font_name, 11)
+        bed_width = self.canv.stringWidth(bed_str, self.font_name, 11)
+        bed_x = (self.width - bed_width) / 2
+        text_bed.setTextOrigin(bed_x, 11.7 * mm)
+        text_bed.textOut(bed_str)
+        self.canv.drawText(text_bed)
+        
+        self.canv.restoreState()
+        
+        # 3. Draw barcode (Code128)
+        # Target size is 180px x 90px (18mm x 9mm)
+        # Left-top position in Figma is (21, 121). Since height is 90px, bottom-left in ReportLab is:
+        # x_pdf = 21 * 0.1 * mm = 2.1 * mm
+        # y_pdf = (220 - 121 - 90) * 0.1 * mm = 9 * 0.1 * mm = 0.9 * mm
+        try:
+            # Generate Code128 barcode. The patient_id is zero-padded 6-digit.
+            # Set quiet zone parameters to 0 so the barcode lines occupy the full 18mm width when scaled.
+            barcode = code128.Code128(self.patient_id, barHeight=9 * mm, lquiet=0, rquiet=0, quiet=0)
+            
+            # Scale barcode dynamically to fit exactly 18mm x 9mm
+            scale_x = (18 * mm) / barcode.width
+            scale_y = (9 * mm) / barcode.height
+            
+            self.canv.saveState()
+            self.canv.translate(2.1 * mm, 0.9 * mm)
+            self.canv.scale(scale_x, scale_y)
+            barcode.drawOn(self.canv, 0, 0)
+            self.canv.restoreState()
+        except Exception as e:
+            # Fallback if barcode fails to render (print ID text instead)
+            self.canv.setFont(self.font_name, 8)
+            id_w = self.canv.stringWidth(self.patient_id, self.font_name, 8)
+            self.canv.drawString((self.width - id_w) / 2, 4 * mm, self.patient_id)
+            
         self.canv.restoreState()
 
 
@@ -1329,9 +1376,13 @@ def export_patient_labels_pdf():
         except ValueError:
             qty = 0
             
-        # Add patient name qty times
+        # Add patient details qty times
         for _ in range(qty):
-            label_items.append(p['patient_name'])
+            label_items.append({
+                'id': p['id'],
+                'name': p['patient_name'],
+                'bed_number': p['bed_number']
+            })
             
     if not label_items:
         return redirect(URL_PREFIX + url_for('export_patient_labels_view'))
@@ -1379,10 +1430,12 @@ def export_patient_labels_pdf():
             for c in range(cols):
                 item_idx = r * cols + c
                 if item_idx < len(page_items):
-                    name = page_items[item_idx]
-                    # Wrap in DashedLabelFlowable for dashed outline and centering
+                    item = page_items[item_idx]
+                    # Wrap in DashedLabelFlowable for outline, name, bed number and barcode
                     row_data.append(DashedLabelFlowable(
-                        name, 
+                        item['id'],
+                        item['name'], 
+                        item.get('bed_number', ''),
                         22 * mm, 
                         22 * mm, 
                         'SimHei' if font_registered else 'Helvetica', 
