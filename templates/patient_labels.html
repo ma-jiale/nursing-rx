@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}批量导出患者标签{% endblock %}
+
+{% block content %}
+    <h1>批量导出患者标签</h1>
+    
+    <!-- Info tip banner -->
+    <div style="background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+        <strong>🖨️ 打印尺寸提示：</strong>
+        为了确保导出的正方形标签裁切线尺寸正好为 <strong>2.2cm × 2.2cm</strong>，请在下载 PDF 并用浏览器或 PDF 阅读器打印时，在打印设置中将<b>“页面缩放”</b>或<b>“缩放比例”</b>设置为 <strong>“实际大小” (Actual Size)</strong> 或 <strong>“100%”</strong>。避免选择“适合纸张”或“收缩以适合”。
+    </div>
+
+    <!-- Quick action buttons -->
+    <div class="actions" style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <button type="button" class="btn btn-secondary" onclick="adjustAllQuantities(1)">所有患者 +1 张</button>
+        <button type="button" class="btn btn-secondary" onclick="adjustAllQuantities(-1)">所有患者 -1 张</button>
+        <button type="button" class="btn btn-danger" onclick="clearAllQuantities()">清空所有数量</button>
+        <a href="{{ URL_PREFIX }}{{ url_for('manage_patients') }}" class="btn btn-secondary" style="margin-left: auto;">返回患者管理</a>
+    </div>
+
+    <form action="{{ URL_PREFIX }}/admin/patients/labels/export" method="POST" id="labelsForm">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th style="width: 15%;">ID</th>
+                    <th style="width: 30%;">患者姓名</th>
+                    <th style="width: 25%;">床号</th>
+                    <th style="width: 30%;">打印数量</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for patient in patients %}
+                <tr>
+                    <td>{{ patient.id }}</td>
+                    <td><strong>{{ patient.patient_name }}</strong></td>
+                    <td>{{ patient.bed_number or '-' }}</td>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 5px;">
+                            <button type="button" class="btn btn-secondary" style="padding: 4px 10px; margin: 0;" onclick="changeQty('qty_{{ patient.id }}', -1)">-</button>
+                            <input type="number" 
+                                   id="qty_{{ patient.id }}" 
+                                   name="qty_{{ patient.id }}" 
+                                   value="0" 
+                                   min="0" 
+                                   max="200" 
+                                   style="width: 70px; text-align: center; padding: 6px; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box;">
+                            <button type="button" class="btn btn-secondary" style="padding: 4px 10px; margin: 0;" onclick="changeQty('qty_{{ patient.id }}', 1)">+</button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" style="text-align: center; color: #999;">暂无患者数据</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <div class="form-actions" style="margin-top: 20px; display: flex; justify-content: flex-end;">
+            <button type="submit" class="btn btn-primary" style="font-size: 16px; padding: 10px 24px;">生成并下载 PDF 标签</button>
+        </div>
+    </form>
+
+    <script>
+        function changeQty(inputId, delta) {
+            const input = document.getElementById(inputId);
+            if (input) {
+                let val = parseInt(input.value) || 0;
+                val = Math.max(0, val + delta);
+                input.value = val;
+            }
+        }
+
+        function adjustAllQuantities(delta) {
+            const inputs = document.querySelectorAll('input[type="number"]');
+            inputs.forEach(input => {
+                let val = parseInt(input.value) || 0;
+                val = Math.max(0, val + delta);
+                input.value = val;
+            });
+        }
+
+        // Adjust all inputs but do not go below 0
+        function clearAllQuantities() {
+            const inputs = document.querySelectorAll('input[type="number"]');
+            inputs.forEach(input => {
+                input.value = 0;
+            });
+        }
+
+        // Validate form before submission
+        document.getElementById('labelsForm').addEventListener('submit', function(e) {
+            const inputs = document.querySelectorAll('input[type="number"]');
+            let totalQty = 0;
+            inputs.forEach(input => {
+                totalQty += parseInt(input.value) || 0;
+            });
+
+            if (totalQty === 0) {
+                e.preventDefault();
+                alert('请至少为一位患者设置大于 0 的打印数量！');
+            }
+        });
+    </script>
+{% endblock %}

@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template, redirect, url_for, session
+from flask import Flask, jsonify, request, render_template, redirect, url_for, session, send_file
 from functools import wraps
 import time
 import sqlite3
@@ -8,6 +8,108 @@ from logging.handlers import RotatingFileHandler
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+from io import BytesIO
+
+# ========================================
+# ReportLab PDF Generation Configuration
+# ========================================
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, PageBreak, Flowable, Frame, PageTemplate, BaseDocTemplate
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas
+
+# Register Chinese TrueType Font (Windows / Linux system fonts)
+font_registered = False
+for font_path in [
+    'C:/Windows/Fonts/simhei.ttf',
+    'C:/Windows/Fonts/simsun.ttc',
+    'C:/Windows/Fonts/msyh.ttc',
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',  # fallback Linux path
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'  # fallback Linux path
+]:
+    if os.path.exists(font_path):
+        try:
+            pdfmetrics.registerFont(TTFont('SimHei', font_path))
+            font_registered = True
+            print(f"[{time.ctime()}] Registered Chinese font: {font_path}")
+            break
+        except Exception as e:
+            print(f"[{time.ctime()}] Failed to register font {font_path}: {e}")
+
+if not font_registered:
+    print(f"[{time.ctime()}] Warning: No Chinese font registered. PDF export might not render Chinese characters properly.")
+
+
+class DashedLabelFlowable(Flowable):
+    """
+    Custom Flowable to draw a square label with a dashed border outline
+    and patient's name vertically and horizontally centered.
+    """
+    def __init__(self, name, width, height, font_name, font_size=12):
+        Flowable.__init__(self)
+        self.name = name
+        self.width = width
+        self.height = height
+        self.font_name = font_name
+        self.font_size = font_size
+        
+    def wrap(self, availWidth, availHeight):
+        return self.width, self.height
+        
+    def draw(self):
+        self.canv.saveState()
+        
+        # Set solid line properties for the border
+        self.canv.setStrokeColor(colors.HexColor('#CCCCCC'))
+        self.canv.setLineWidth(0.5)
+        
+        # Draw the rectangle exactly on the boundary so adjacent cells share a border (zero gaps)
+        self.canv.rect(0, 0, self.width, self.height)
+        
+        # Draw patient name (centered)
+        self.canv.setFont(self.font_name, self.font_size)
+        self.canv.setFillColor(colors.black)
+        
+        # Calculate text width to center horizontally
+        text_width = self.canv.stringWidth(self.name, self.font_name, self.font_size)
+        x = (self.width - text_width) / 2
+        
+        # Calculate Y for centering vertically
+        # Standard cap height of font is approx 0.7 * font_size
+        y = (self.height - self.font_size * 0.7) / 2
+        
+        self.canv.drawString(x, y, self.name)
+        self.canv.restoreState()
+
+
+class ZeroPaddingDocTemplate(SimpleDocTemplate):
+    """
+    Subclass of SimpleDocTemplate that enforces 0 margins/paddings on the
+    underlying PDF Frame, preventing unwanted extra blank pages during generation.
+    """
+    def build(self, flowables, onFirstPage=lambda *a: None, onLaterPages=lambda *a: None, canvasmaker=canvas.Canvas):
+        self._calc()
+        frameT = Frame(
+            self.leftMargin, 
+            self.bottomMargin, 
+            self.width, 
+            self.height, 
+            id='normal',
+            leftPadding=0, 
+            rightPadding=0, 
+            topPadding=0, 
+            bottomPadding=0
+        )
+        self.addPageTemplates([
+            PageTemplate(id='First', frames=frameT, onPage=onFirstPage, pagesize=self.pagesize),
+            PageTemplate(id='Later', frames=frameT, onPage=onLaterPages, pagesize=self.pagesize)
+        ])
+        BaseDocTemplate.build(self, flowables, canvasmaker=canvasmaker)
+
 
 # ========================================
 # Flask Application Initialization
@@ -20,8 +122,8 @@ app.secret_key = 'ezdose-secret-key-change-in-production'  # Session密钥，生
 # ========================================
 # Set to empty string for local development
 # Set to '/flask' for remote deployment to handle reverse proxy routing
-# URL_PREFIX = ''  # Local development mode
-URL_PREFIX = '/nursing-rx'  # Uncomment this line for remote deployment
+URL_PREFIX = ''  # Local development mode
+# URL_PREFIX = '/nursing-rx'  # Uncomment this line for remote deployment
 
 # ========================================
 # File Path Configuration
@@ -1188,6 +1290,139 @@ def manage_patients():
     
     patients_list = [dict_from_row(p) for p in patients]
     return render_template('patients.html', patients=patients_list, search_query=search_query)
+
+
+# ========================================
+# Patient PDF Label Export Routes
+# ========================================
+
+@app.route('/admin/patients/labels', methods=['GET'])
+@permission_required('can_edit_patients')
+def export_patient_labels_view():
+    """
+    Display page to select patient label quantities for A4 PDF export.
+    """
+    conn = get_db_connection()
+    patients = conn.execute('SELECT * FROM patients ORDER BY id').fetchall()
+    conn.close()
+    
+    patients_list = [dict_from_row(p) for p in patients]
+    return render_template('patient_labels.html', patients=patients_list)
+
+
+@app.route('/admin/patients/labels/export', methods=['POST'])
+@permission_required('can_edit_patients')
+def export_patient_labels_pdf():
+    """
+    Generate and download print-ready A4 PDF with 2.2cm x 2.2cm patient labels.
+    """
+    conn = get_db_connection()
+    patients = conn.execute('SELECT * FROM patients').fetchall()
+    conn.close()
+    
+    label_items = []
+    for p in patients:
+        qty_field = f'qty_{p["id"]}'
+        qty_val = request.form.get(qty_field, '0')
+        try:
+            qty = int(qty_val)
+        except ValueError:
+            qty = 0
+            
+        # Add patient name qty times
+        for _ in range(qty):
+            label_items.append(p['patient_name'])
+            
+    if not label_items:
+        return redirect(URL_PREFIX + url_for('export_patient_labels_view'))
+        
+    # Generate PDF in memory
+    buffer = BytesIO()
+    
+    # Page dimensions (A4 is 210mm x 297mm)
+    # Target grid is 8 cols x 12 rows = 96 labels per page.
+    # Label is 22mm x 22mm.
+    # Margins: Left/Right = (210 - 176)/2 = 17mm, Top/Bottom = 15mm (provides 3mm buffer to prevent empty page overflow)
+    doc = ZeroPaddingDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=17 * mm,
+        rightMargin=17 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm
+    )
+    
+    styles = getSampleStyleSheet()
+    label_style = ParagraphStyle(
+        name='PatientLabelStyle',
+        fontName='SimHei' if font_registered else 'Helvetica',
+        fontSize=12,
+        leading=14,
+        alignment=1,  # Center
+        textColor=colors.HexColor('#000000')
+    )
+    
+    story = []
+    
+    # Split label_items into pages (96 labels per page)
+    labels_per_page = 96
+    cols = 8
+    rows = 12
+    
+    for page_idx in range(0, len(label_items), labels_per_page):
+        page_items = label_items[page_idx : page_idx + labels_per_page]
+        
+        # Build 12x8 grid
+        grid_data = []
+        for r in range(rows):
+            row_data = []
+            for c in range(cols):
+                item_idx = r * cols + c
+                if item_idx < len(page_items):
+                    name = page_items[item_idx]
+                    # Wrap in DashedLabelFlowable for dashed outline and centering
+                    row_data.append(DashedLabelFlowable(
+                        name, 
+                        22 * mm, 
+                        22 * mm, 
+                        'SimHei' if font_registered else 'Helvetica', 
+                        12
+                    ))
+                else:
+                    row_data.append("")
+            grid_data.append(row_data)
+            
+        # Create Table for this page
+        t = Table(grid_data, colWidths=[22 * mm] * cols, rowHeights=[22 * mm] * rows)
+        t.setStyle(TableStyle([
+            # No global GRID: borders are drawn by DashedLabelFlowable only on active cells
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        
+        story.append(t)
+        
+        # If there are more pages, append a PageBreak
+        if page_idx + labels_per_page < len(label_items):
+            story.append(PageBreak())
+            
+    # Build PDF
+    doc.build(story)
+    
+    # Log operation
+    log_operation('export', 'patient', '患者', details=f"导出 A4 PDF 标签，共 {len(label_items)} 张")
+    
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"patient_labels_{int(time.time())}.pdf",
+        mimetype='application/pdf'
+    )
 
 
 @app.route('/admin/patients/add', methods=['GET', 'POST'])

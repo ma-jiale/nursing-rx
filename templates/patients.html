@@ -8,6 +8,7 @@
     <div class="actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <div style="display: flex; gap: 10px; align-items: center;">
             <a href="{{ URL_PREFIX }}{{ url_for('add_patient') }}" class="btn btn-primary">新增患者</a>
+            <a href="{{ URL_PREFIX }}{{ url_for('export_patient_labels_view') }}" class="btn btn-secondary">🏷️ 批量导出PDF标签</a>
             <!-- Printer connection status indicator -->
             <button id="btnConnectPrinter" class="btn btn-secondary" onclick="showPrinterSetup()">连接打印机</button>
             <span id="printerStatus" class="printer-status printer-status-disconnected">
