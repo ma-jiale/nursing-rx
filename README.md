@@ -146,3 +146,40 @@ python main.py
 - API请求记录
 - 数据库操作状态
 - 错误信息详情
+
+---
+
+## 🎨 UI/UX 优化与开发指南
+
+在分支 `feature/ux-improvement` 中，系统引进了 **Pillxar** 现代卡片与品牌设计系统，由 Tailwind CSS + Flowbite + Alpine.js 提供技术支撑。
+
+### 1. 前端构建与常用命令
+项目根目录下配置了 `package.json`，运行前端需要确保安装了 Node.js（和 npm/npx）：
+
+```bash
+# 1. 安装前端构建依赖
+npm install
+
+# 2. 实时监听并编译 Tailwind CSS (开发模式)
+npm run watch:css
+
+# 3. 编译并压缩 CSS (生产环境)
+npm run build:css
+```
+
+### 2. 核心重构经验与避坑指南 (Gotchas)
+
+#### ⚠️ Windows 下 Tailwind 路径匹配失效问题
+- **表现**：在 Windows 操作系统中，若 `tailwind.config.js` 的 `content` 采用相对路径（如 `"./templates/**/*.html"`），编译器可能无法精准识别并抽取模板中的实用类，导致生成的 CSS 缺乏对应样式。
+- **解决**：在配置文件中，针对模板文件**直接指定绝对路径或增加扁平化通配符**（例如 `"D:/WorkSpace/Dispenser/EZ-Dose-server/templates/**/*.html"`），强制编译器在 Windows 下绝对定位。
+
+#### ⚠️ HTML 输入框的 disabled 状态导致表单漏报问题
+- **表现**：为了实现提交表单时的防重点击动效，若直接对输入框 `<input>` 应用 `:disabled="loading"`（在 Alpine.js 提交表单时触发），**浏览器会根据 HTML 规范在提交时将该禁用元素排除在 POST 负载之外**。这会导致后端收到的表单数据为空，始终提示用户名或密码错误。
+- **解决**：表单输入框在提交期间应保持 `enabled` 状态，只针对提交按钮 `<button type="submit">` 执行 `:disabled="loading"` 并展示 Loading 动效。
+
+#### ⚠️ 错误提示兼顾 Flask error 变量与 Flash 渲染
+- **表现**：原系统后台可能存在两种错误反馈链路：一种是通过 `render_template(..., error=error)` 注入的上下文变量，另一种是 Flask `flash()` 闪现消息队列。
+- **解决**：在编写 Jinja2 提示框模板时，应通过合并赋值同时支持两者的渲染逻辑，以增强前后端兼容性：
+  ```html
+  {% set display_error = error or (get_flashed_messages(category_filter=["error"])[0] if get_flashed_messages(category_filter=["error"]) else None) %}
+  ```

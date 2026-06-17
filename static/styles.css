@@ -19,8 +19,6 @@ th, td {
 }
 
 th { 
-    background-color: #343a40; 
-    color: white;
     font-weight: bold;
 }
 
@@ -130,9 +128,10 @@ tr:hover {
 /* 标题样式 */
 h1 {
     color: #343a40;
-    border-bottom: 2px solid #007bff;
+    border-bottom: 2px solid #C2603C;
     padding-bottom: 10px;
     margin-bottom: 20px;
+    display: inline-block;
 }
 
 /* 响应式设计 */
@@ -335,4 +334,12 @@ h1 {
     max-width: 100%;
     max-height: 200px;
     border: 1px solid #dee2e6;
+}
+
+/* 修复文件选择按钮的圆角、边距与内边距对称性，解决 Flowbite 默认样式的裁剪与不对称问题 */
+input[type="file"]::file-selector-button {
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
+    padding: 0.5rem 1rem !important; /* 对称内边距 */
+    border-radius: 0.375rem !important; /* 饱满的圆角 */
 }
