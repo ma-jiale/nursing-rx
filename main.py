@@ -93,11 +93,13 @@ class DashedLabelFlowable(Flowable):
         text_name.textOut(self.name)
         self.canv.drawText(text_name)
         
-        # 2.5 Draw bold bed number (centered horizontally between barcode and name, only showing digits)
+        # 2.5 Draw bold bed number (centered horizontally between barcode and name)
         # Positioned at 11.7mm to be mathematically centered between barcode top (9.9mm) and name baseline (17.3mm)
-        bed_str = ''.join(c for c in str(self.bed_number) if c.isdigit())
-        if not bed_str:
-            bed_str = str(self.bed_number)
+        bed_str = ""
+        if self.bed_number is not None:
+            temp_str = str(self.bed_number).strip()
+            if temp_str.lower() not in ('none', ''):
+                bed_str = temp_str
         
         text_bed = self.canv.beginText()
         text_bed.setTextRenderMode(2) # Fill and Stroke (faux bold)
