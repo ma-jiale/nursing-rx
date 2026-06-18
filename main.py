@@ -29,8 +29,12 @@ for font_path in [
     'C:/Windows/Fonts/simhei.ttf',
     'C:/Windows/Fonts/simsun.ttc',
     'C:/Windows/Fonts/msyh.ttc',
-    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',  # fallback Linux path
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'  # fallback Linux path
+    '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',  # Droid Sans Fallback
+    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',               # WenQuanYi Zen Hei
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',             # WenQuanYi Micro Hei
+    '/usr/share/fonts/truetype/arphic/gkai00mp.ttf',              # Arphic Kaiti
+    '/usr/share/fonts/truetype/arphic/gbsn00lp.ttf',              # Arphic Sungti
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'      # Noto Sans CJK
 ]:
     if os.path.exists(font_path):
         try:
