@@ -26,6 +26,7 @@ from reportlab.graphics.barcode import code128
 # Register Chinese TrueType Font (Windows / Linux system fonts)
 font_registered = False
 for font_path in [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'fonts', 'simhei.ttf'),
     'C:/Windows/Fonts/simhei.ttf',
     'C:/Windows/Fonts/simsun.ttc',
     'C:/Windows/Fonts/msyh.ttc',
