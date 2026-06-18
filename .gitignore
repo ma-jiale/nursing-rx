@@ -208,3 +208,7 @@ __marimo__/
 
 # Node / Frontend dependencies
 node_modules/
+
+# Unignore compiled Tailwind CSS assets
+!static/dist/
+!static/dist/main.css
