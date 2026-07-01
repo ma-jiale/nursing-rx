@@ -320,10 +320,17 @@ def init_db():
             is_active INTEGER DEFAULT 1,
             pill_size_area REAL,
             image_resource_id TEXT,
+            dosage_spec TEXT DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
         )
     ''')
+    
+    # Migration: Add dosage_spec column if it doesn't exist
+    cursor.execute("PRAGMA table_info(prescriptions)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if 'dosage_spec' not in columns:
+        cursor.execute("ALTER TABLE prescriptions ADD COLUMN dosage_spec TEXT DEFAULT ''")
     
     # System settings table - for calibration configuration
     cursor.execute('''
@@ -976,7 +983,8 @@ def upload_prescriptions_for_dispensing():
                         start_date = ?, duration_days = ?, last_dispensed_expiry_date = ?,
                         is_active = ?, 
                         pill_size_area = COALESCE(?, pill_size_area),
-                        image_resource_id = COALESCE(?, image_resource_id)
+                        image_resource_id = COALESCE(?, image_resource_id),
+                        dosage_spec = ?
                     WHERE id = ?
                 ''', (
                     patient_id,
@@ -991,6 +999,7 @@ def upload_prescriptions_for_dispensing():
                     int(rx.get('is_active', 1)),
                     client_pill_size_value,  # NULL preserves existing value via COALESCE
                     client_image_id_value,   # NULL preserves existing value via COALESCE
+                    rx.get('dosage_spec', ''),
                     rx_id
                 ))
             else:
@@ -999,8 +1008,8 @@ def upload_prescriptions_for_dispensing():
                     INSERT INTO prescriptions (
                         patient_id, medicine_name, morning_dosage, noon_dosage, evening_dosage,
                         meal_timing, start_date, duration_days, last_dispensed_expiry_date,
-                        is_active, pill_size_area, image_resource_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        is_active, pill_size_area, image_resource_id, dosage_spec
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     patient_id,
                     medicine_name,
@@ -1013,7 +1022,8 @@ def upload_prescriptions_for_dispensing():
                     rx.get('last_dispensed_expiry_date'),
                     int(rx.get('is_active', 1)),
                     float(rx.get('pill_size_area', 0)) if rx.get('pill_size_area') else None,
-                    rx.get('image_resource_id', '')
+                    rx.get('image_resource_id', ''),
+                    rx.get('dosage_spec', '')
                 ))
             inserted_count += 1
         
@@ -1699,8 +1709,8 @@ def add_prescription():
         cursor.execute('''
             INSERT INTO prescriptions (
                 patient_id, medicine_name, morning_dosage, noon_dosage, evening_dosage,
-                meal_timing, start_date, duration_days, is_active, pill_size_area
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                meal_timing, start_date, duration_days, is_active, pill_size_area, dosage_spec
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             request.form['patient_id'],
             request.form['medicine_name'],
@@ -1711,7 +1721,8 @@ def add_prescription():
             request.form['start_date'],
             duration_days,
             1 if request.form.get('is_active') else 0,
-            float(request.form['pill_size_area']) if request.form.get('pill_size_area') else None
+            float(request.form['pill_size_area']) if request.form.get('pill_size_area') else None,
+            request.form.get('dosage_spec', '')
         ))
         conn.commit()
         new_rx_id = cursor.lastrowid
@@ -1819,7 +1830,7 @@ def edit_prescription(prescription_id):
             UPDATE prescriptions SET
                 patient_id=?, medicine_name=?, morning_dosage=?, noon_dosage=?, evening_dosage=?,
                 meal_timing=?, start_date=?, duration_days=?, is_active=?, pill_size_area=?,
-                image_resource_id=?
+                image_resource_id=?, dosage_spec=?
             WHERE id=?
         ''', (
             request.form['patient_id'],
@@ -1833,6 +1844,7 @@ def edit_prescription(prescription_id):
             1 if request.form.get('is_active') else 0,
             pill_size_area,
             image_resource_id,
+            request.form.get('dosage_spec', ''),
             prescription_id
         ))
         conn.commit()

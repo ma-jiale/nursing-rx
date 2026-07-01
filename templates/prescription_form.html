@@ -50,23 +50,30 @@
                        class="block w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">
             </div>
 
+            <!-- Dosage Specification / Reminder -->
+            <div class="space-y-1.5">
+                <label for="dosage_spec" class="block text-sm font-medium text-stone-700">规格与剂量说明 (选填，仅作护士提示)</label>
+                <input type="text" id="dosage_spec" name="dosage_spec" value="{{ prescription.dosage_spec if prescription else '' }}" placeholder="例如：250mg/片，一盒2板，一板10片；或：500mg/片，一瓶60片"
+                       class="block w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">
+            </div>
+
             <!-- Dosages settings -->
             <div class="space-y-2">
-                <label class="block text-sm font-medium text-stone-700">单次服用剂量（单位：片 / 粒 / 袋）</label>
+                <label class="block text-sm font-medium text-stone-700">单次服用剂量（单位：片）</label>
                 <div class="flex flex-wrap gap-6 border border-line rounded-lg p-4 bg-sunken/45 max-w-md">
                     <div class="flex items-center gap-2">
                         <label for="morning_dosage" class="text-xs font-semibold text-stone-500">早餐</label>
-                        <input type="number" id="morning_dosage" name="morning_dosage" step="1" min="0" value="{{ prescription.morning_dosage if prescription else 0 }}"
+                        <input type="number" id="morning_dosage" name="morning_dosage" step="1" min="0" value="{{ (prescription.morning_dosage | int) if prescription else 0 }}"
                                class="block w-16 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-center text-sm text-stone-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 font-semibold">
                     </div>
                     <div class="flex items-center gap-2">
                         <label for="noon_dosage" class="text-xs font-semibold text-stone-500">午餐</label>
-                        <input type="number" id="noon_dosage" name="noon_dosage" step="1" min="0" value="{{ prescription.noon_dosage if prescription else 0 }}"
+                        <input type="number" id="noon_dosage" name="noon_dosage" step="1" min="0" value="{{ (prescription.noon_dosage | int) if prescription else 0 }}"
                                class="block w-16 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-center text-sm text-stone-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 font-semibold">
                     </div>
                     <div class="flex items-center gap-2">
                         <label for="evening_dosage" class="text-xs font-semibold text-stone-500">晚餐</label>
-                        <input type="number" id="evening_dosage" name="evening_dosage" step="1" min="0" value="{{ prescription.evening_dosage if prescription else 0 }}"
+                        <input type="number" id="evening_dosage" name="evening_dosage" step="1" min="0" value="{{ (prescription.evening_dosage | int) if prescription else 0 }}"
                                class="block w-16 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-center text-sm text-stone-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 font-semibold">
                     </div>
                 </div>
