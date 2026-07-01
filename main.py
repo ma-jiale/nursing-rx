@@ -1686,6 +1686,15 @@ def add_prescription():
     patients = conn.execute('SELECT id, patient_name, bed_number FROM patients ORDER BY patient_name').fetchall()
     
     if request.method == 'POST':
+        is_long_term = request.form.get('is_long_term')
+        if is_long_term:
+            duration_days = 99999
+        else:
+            try:
+                duration_days = int(request.form.get('duration_days', 7))
+            except ValueError:
+                duration_days = 7
+                
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO prescriptions (
@@ -1700,7 +1709,7 @@ def add_prescription():
             float(request.form.get('evening_dosage', 0)),
             request.form.get('meal_timing', ''),
             request.form['start_date'],
-            int(request.form.get('duration_days', 7)),
+            duration_days,
             1 if request.form.get('is_active') else 0,
             float(request.form['pill_size_area']) if request.form.get('pill_size_area') else None
         ))
@@ -1797,7 +1806,15 @@ def edit_prescription(prescription_id):
                 file.save(filepath)
                 image_resource_id = new_filename
                 logger.info(f"Updated medicine image for prescription {prescription_id}: {new_filename}")
-        
+        is_long_term = request.form.get('is_long_term')
+        if is_long_term:
+            duration_days = 99999
+        else:
+            try:
+                duration_days = int(request.form.get('duration_days', 7))
+            except ValueError:
+                duration_days = 7
+                
         cursor.execute('''
             UPDATE prescriptions SET
                 patient_id=?, medicine_name=?, morning_dosage=?, noon_dosage=?, evening_dosage=?,
@@ -1812,7 +1829,7 @@ def edit_prescription(prescription_id):
             float(request.form.get('evening_dosage', 0)),
             request.form.get('meal_timing', ''),
             request.form['start_date'],
-            int(request.form.get('duration_days', 7)),
+            duration_days,
             1 if request.form.get('is_active') else 0,
             pill_size_area,
             image_resource_id,
