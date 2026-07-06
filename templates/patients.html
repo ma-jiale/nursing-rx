@@ -60,29 +60,33 @@
         <table class="min-w-full divide-y divide-line text-sm">
             <thead class="bg-sunken">
                 <tr>
-                    <th class="px-6 py-3.5 text-left font-semibold text-stone-600">ID</th>
-                    <th class="px-6 py-3.5 text-left font-semibold text-stone-600">患者姓名</th>
-                    <th class="px-6 py-3.5 text-left font-semibold text-stone-600">床号</th>
-                    <th class="px-6 py-3.5 text-left font-semibold text-stone-600">照片标识</th>
-                    <th class="px-6 py-3.5 text-left font-semibold text-stone-600">创建时间</th>
-                    <th class="px-6 py-3.5 text-right font-semibold text-stone-600">操作</th>
+                    <th class="px-6 py-3.5 text-center font-semibold text-stone-600">ID</th>
+                    <th class="px-6 py-3.5 text-center font-semibold text-stone-600">患者姓名</th>
+                    <th class="px-6 py-3.5 text-center font-semibold text-stone-600">床号</th>
+                    <th class="px-6 py-3.5 text-center font-semibold text-stone-600">照片标识</th>
+                    <th class="px-6 py-3.5 text-center font-semibold text-stone-600">创建时间</th>
+                    <th class="px-6 py-3.5 text-center font-semibold text-stone-600">操作</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-line bg-surface">
                 {% for patient in patients %}
                 <tr class="transition hover:bg-stone-50/50">
-                    <td class="px-6 py-4 text-stone-500 font-mono">{{ patient.id }}</td>
-                    <td class="px-6 py-4 font-semibold text-stone-900">{{ patient.patient_name }}</td>
-                    <td class="px-6 py-4">
+                    <td class="px-6 py-4 text-center text-stone-500 font-mono">{{ patient.id }}</td>
+                    <td class="px-6 py-4 text-center font-semibold text-stone-900">{{ patient.patient_name }}</td>
+                    <td class="px-6 py-4 text-center">
                         {% if patient.bed_number %}
                         <span class="inline-flex items-center rounded-md bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700">{{ patient.bed_number }}</span>
                         {% else %}
                         <span class="text-stone-400">-</span>
                         {% endif %}
                     </td>
-                    <td class="px-6 py-4 text-stone-500 font-mono text-xs">{{ patient.profile_photo_resource_id or '-' }}</td>
-                    <td class="px-6 py-4 text-stone-500">{{ patient.created_at or '-' }}</td>
-                    <td class="px-6 py-4 text-right space-x-2">
+                    <td class="px-6 py-4 text-center text-stone-500 font-mono text-xs">{{ patient.profile_photo_resource_id or '-' }}</td>
+                    <td class="px-6 py-4 text-center text-stone-500">{{ patient.created_at or '-' }}</td>
+                    <td class="px-6 py-4 text-center space-x-2">
+                        <a href="{{ URL_PREFIX }}{{ url_for('manage_prescriptions', patient_id=patient.id) }}" 
+                           class="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-stone-600 hover:bg-stone-100 hover:text-stone-900 transition shadow-sm">
+                            处方
+                        </a>
                         <button class="inline-flex items-center gap-1 rounded-lg bg-brand-50 border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-500 hover:text-white transition shadow-sm"
                                 onclick="showPrintDialog('{{ patient.patient_name }}', '{{ patient.bed_number or '' }}', '{{ patient.id }}')">
                             打印标签

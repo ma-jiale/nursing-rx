@@ -36,7 +36,7 @@
                         class="block w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-stone-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">
                     <option value="">-- 请选择患者 --</option>
                     {% for patient in patients %}
-                    <option value="{{ patient.id }}" {{ "selected" if prescription and prescription.patient_id==patient.id else "" }}>
+                    <option value="{{ patient.id }}" {{ "selected" if (prescription and prescription.patient_id==patient.id) or (default_patient_id and default_patient_id==patient.id) else "" }}>
                         {{ patient.patient_name }} (床号: {{ patient.bed_number or '-' }})
                     </option>
                     {% endfor %}
@@ -156,7 +156,7 @@
                         class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 active:bg-brand-700">
                     {{ "更新" if prescription else "确认新增" }}
                 </button>
-                <a href="{{ URL_PREFIX }}{{ url_for('manage_prescriptions') }}" 
+                <a href="{{ URL_PREFIX }}{{ url_for('manage_prescriptions', patient_id=default_patient_id) if default_patient_id else url_for('manage_prescriptions') }}" 
                    class="inline-flex items-center justify-center rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50 transition focus:outline-none focus:ring-2 focus:ring-brand-500/20">
                     取消
                 </a>

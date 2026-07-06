@@ -1658,13 +1658,36 @@ def delete_patient(patient_id):
 @permission_required('can_edit_prescriptions')
 def manage_prescriptions():
     """
-    Display list of all prescriptions with optional search.
+    Display list of all prescriptions with optional search and patient filtering.
     """
     conn = get_db_connection()
     
     search_query = request.args.get('search', '').strip()
+    patient_id = request.args.get('patient_id', '').strip()
     
-    if search_query:
+    filtered_patient_name = None
+    if patient_id:
+        patient_row = conn.execute('SELECT patient_name FROM patients WHERE id = ?', (patient_id,)).fetchone()
+        if patient_row:
+            filtered_patient_name = patient_row['patient_name']
+            
+    if patient_id and search_query:
+        prescriptions = conn.execute('''
+            SELECT p.*, pt.patient_name, pt.bed_number 
+            FROM prescriptions p
+            LEFT JOIN patients pt ON p.patient_id = pt.id
+            WHERE p.patient_id = ? AND (p.medicine_name LIKE ? OR pt.bed_number LIKE ?)
+            ORDER BY p.id DESC
+        ''', (patient_id, f'%{search_query}%', f'%{search_query}%')).fetchall()
+    elif patient_id:
+        prescriptions = conn.execute('''
+            SELECT p.*, pt.patient_name, pt.bed_number 
+            FROM prescriptions p
+            LEFT JOIN patients pt ON p.patient_id = pt.id
+            WHERE p.patient_id = ?
+            ORDER BY p.id DESC
+        ''', (patient_id,)).fetchall()
+    elif search_query:
         prescriptions = conn.execute('''
             SELECT p.*, pt.patient_name, pt.bed_number 
             FROM prescriptions p
@@ -1683,7 +1706,11 @@ def manage_prescriptions():
     conn.close()
     
     prescriptions_list = [dict_from_row(p) for p in prescriptions]
-    return render_template('prescriptions.html', prescriptions=prescriptions_list, search_query=search_query)
+    return render_template('prescriptions.html', 
+                           prescriptions=prescriptions_list, 
+                           search_query=search_query,
+                           patient_id=patient_id,
+                           filtered_patient_name=filtered_patient_name)
 
 
 @app.route('/admin/prescriptions/add', methods=['GET', 'POST'])
@@ -1694,6 +1721,7 @@ def add_prescription():
     """
     conn = get_db_connection()
     patients = conn.execute('SELECT id, patient_name, bed_number FROM patients ORDER BY patient_name').fetchall()
+    default_patient_id = request.args.get('patient_id', '').strip()
     
     if request.method == 'POST':
         is_long_term = request.form.get('is_long_term')
@@ -1756,11 +1784,14 @@ def add_prescription():
                      target_name=request.form['medicine_name'],
                      details=f"患者: {patient_name}" + (f", 图片: {image_resource_id}" if image_resource_id else ""))
         
-        return redirect(URL_PREFIX + url_for('manage_prescriptions'))
+        if default_patient_id:
+            return redirect(URL_PREFIX + url_for('manage_prescriptions', patient_id=default_patient_id))
+        else:
+            return redirect(URL_PREFIX + url_for('manage_prescriptions'))
     
     conn.close()
     patients_list = [dict_from_row(p) for p in patients]
-    return render_template('prescription_form.html', prescription=None, patients=patients_list)
+    return render_template('prescription_form.html', prescription=None, patients=patients_list, default_patient_id=default_patient_id)
 
 
 @app.route('/admin/prescriptions/edit/<int:prescription_id>', methods=['GET', 'POST'])
