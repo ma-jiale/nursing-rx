@@ -1803,6 +1803,7 @@ def edit_prescription(prescription_id):
     conn = get_db_connection()
     prescription = conn.execute('SELECT * FROM prescriptions WHERE id = ?', (prescription_id,)).fetchone()
     patients = conn.execute('SELECT id, patient_name, bed_number FROM patients ORDER BY patient_name').fetchall()
+    default_patient_id = request.args.get('patient_id', '').strip()
     
     if not prescription:
         conn.close()
@@ -1890,12 +1891,16 @@ def edit_prescription(prescription_id):
                      target_name=request.form['medicine_name'],
                      details=f"患者: {patient_name}")
         
-        return redirect(URL_PREFIX + url_for('manage_prescriptions'))
+        if default_patient_id:
+            return redirect(URL_PREFIX + url_for('manage_prescriptions', patient_id=default_patient_id))
+        else:
+            return redirect(URL_PREFIX + url_for('manage_prescriptions'))
     
     conn.close()
     return render_template('prescription_form.html', 
                           prescription=dict_from_row(prescription), 
-                          patients=[dict_from_row(p) for p in patients])
+                          patients=[dict_from_row(p) for p in patients],
+                          default_patient_id=default_patient_id)
 
 
 @app.route('/admin/prescriptions/delete/<int:prescription_id>')
@@ -1905,6 +1910,8 @@ def delete_prescription(prescription_id):
     Handle deleting a prescription.
     """
     conn = get_db_connection()
+    patient_id = request.args.get('patient_id', '').strip()
+    
     # Get prescription info before deletion for logging
     rx = conn.execute('''
         SELECT p.medicine_name, pt.patient_name 
@@ -1922,7 +1929,10 @@ def delete_prescription(prescription_id):
     log_operation('delete', 'prescription', '处方', target_id=prescription_id,
                  target_name=medicine_name, details=f"患者: {patient_name}")
     
-    return redirect(URL_PREFIX + url_for('manage_prescriptions'))
+    if patient_id:
+        return redirect(URL_PREFIX + url_for('manage_prescriptions', patient_id=patient_id))
+    else:
+        return redirect(URL_PREFIX + url_for('manage_prescriptions'))
 
 
 # ========================================
