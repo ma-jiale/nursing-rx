@@ -1749,7 +1749,7 @@ def add_prescription():
             request.form['start_date'],
             duration_days,
             1 if request.form.get('is_active') else 0,
-            float(request.form['pill_size_area']) if request.form.get('pill_size_area') else None,
+            float(request.form['pill_size_area']) if (request.form.get('pill_size_area') and float(request.form['pill_size_area']) > 0) else 0,
             request.form.get('dosage_spec', '')
         ))
         conn.commit()
