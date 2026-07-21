@@ -1,0 +1,198 @@
+"""Integration tests for /packer/* device-sync API endpoints."""
+import json
+
+
+def _add_patient(conn, pid="000001", name="Li"):
+    conn.execute(
+        "INSERT INTO patients (id, patient_name, bed_number) VALUES (?, ?, ?)",
+        (pid, name, "12"),
+    )
+    conn.commit()
+
+
+def _add_prescription(conn, patient_id="000001", **kw):
+    fields = {
+        "medicine_name": "Aspirin",
+        "morning_dosage": 1, "noon_dosage": 0, "evening_dosage": 1,
+        "meal_timing": "after_meal", "start_date": "2026-07-01",
+        "duration_days": 7, "is_active": 1,
+        "pill_size_area": 500.0, "image_resource_id": "img_a.png",
+    }
+    fields.update(kw)
+    cur = conn.execute(
+        """INSERT INTO prescriptions
+           (patient_id, medicine_name, morning_dosage, noon_dosage, evening_dosage,
+            meal_timing, start_date, duration_days, is_active, pill_size_area, image_resource_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (patient_id, fields["medicine_name"], fields["morning_dosage"],
+         fields["noon_dosage"], fields["evening_dosage"], fields["meal_timing"],
+         fields["start_date"], fields["duration_days"], fields["is_active"],
+         fields["pill_size_area"], fields["image_resource_id"]),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def test_index_status(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["database"] == "SQLite"
+    assert any("/packer/patients" in e for e in body["available_endpoints"])
+
+
+def test_get_patients_empty(client):
+    resp = client.get("/packer/patients")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["count"] == 0
+    assert body["data"] == []
+
+
+def test_get_patients_returns_rows(client, db_conn):
+    _add_patient(db_conn, "000001", "Li")
+    resp = client.get("/packer/patients")
+    body = resp.get_json()
+    assert body["count"] == 1
+    assert body["data"][0]["patient_name"] == "Li"
+
+
+def test_upload_patients_camelcase_alias(client):
+    resp = client.post(
+        "/packer/patients/upload",
+        data=json.dumps({"patients": [{"patientName": "Wang", "patientBedNumber": "7"}]}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["count"] == 1
+    # ID generated as 6-digit zero-padded
+    listed = client.get("/packer/patients").get_json()["data"]
+    assert listed[0]["id"] == "000001"
+    assert listed[0]["patient_name"] == "Wang"
+
+
+def test_upload_patients_bad_format(client):
+    resp = client.post(
+        "/packer/patients/upload",
+        data=json.dumps({"wrong": []}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["success"] is False
+
+
+def test_get_prescriptions_only_active(client, db_conn):
+    _add_patient(db_conn)
+    _add_prescription(db_conn, is_active=1, medicine_name="Active")
+    _add_prescription(db_conn, is_active=0, medicine_name="Inactive")
+    body = client.get("/packer/prescriptions").get_json()
+    names = [r["medicine_name"] for r in body["data"]]
+    assert "Active" in names
+    assert "Inactive" not in names
+    # JOIN brings patient_name through
+    assert body["data"][0]["patient_name"] == "Li"
+
+
+def test_upload_prescription_insert_new(client, db_conn):
+    _add_patient(db_conn)
+    resp = client.post(
+        "/packer/prescriptions/upload",
+        data=json.dumps({"prescriptions": [
+            {"patient_id": "000001", "medicine_name": "NewMed",
+             "morning_dosage": 2, "duration_days": 5}
+        ]}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    row = db_conn.execute(
+        "SELECT * FROM prescriptions WHERE medicine_name='NewMed'"
+    ).fetchone()
+    assert row is not None
+    assert row["morning_dosage"] == 2
+
+
+def test_coalesce_preserves_calibrated_pill_size(client, db_conn):
+    """Device sync must NOT overwrite calibrated pill_size_area when it sends 0/null.
+    This protects the on-device visual calibration (see AGENT.md)."""
+    _add_patient(db_conn)
+    rx_id = _add_prescription(db_conn, pill_size_area=500.0, image_resource_id="cal.png")
+
+    # Device re-syncs the same prescription but sends 0 / empty for calibrated fields
+    resp = client.post(
+        "/packer/prescriptions/upload",
+        data=json.dumps({"prescriptions": [
+            {"id": rx_id, "patient_id": "000001", "medicine_name": "Aspirin",
+             "pill_size_area": 0, "image_resource_id": ""}
+        ]}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    row = db_conn.execute(
+        "SELECT pill_size_area, image_resource_id FROM prescriptions WHERE id=?", (rx_id,)
+    ).fetchone()
+    assert row["pill_size_area"] == 500.0        # preserved, not zeroed
+    assert row["image_resource_id"] == "cal.png"  # preserved, not blanked
+
+
+def test_upload_prescription_updates_new_calibration(client, db_conn):
+    """When device DOES send a real calibrated value, it must be written."""
+    _add_patient(db_conn)
+    rx_id = _add_prescription(db_conn, pill_size_area=500.0)
+    client.post(
+        "/packer/prescriptions/upload",
+        data=json.dumps({"prescriptions": [
+            {"id": rx_id, "patient_id": "000001", "medicine_name": "Aspirin",
+             "pill_size_area": 777.5, "image_resource_id": "new.png"}
+        ]}),
+        content_type="application/json",
+    )
+    row = db_conn.execute(
+        "SELECT pill_size_area, image_resource_id FROM prescriptions WHERE id=?", (rx_id,)
+    ).fetchone()
+    assert row["pill_size_area"] == 777.5
+    assert row["image_resource_id"] == "new.png"
+
+
+def test_dispense_records_log(client, db_conn):
+    _add_patient(db_conn)
+    rx_id = _add_prescription(db_conn)
+    resp = client.post(
+        "/packer/dispense",
+        data=json.dumps({
+            "dispense_date": "2026-07-21", "patient_id": "000001",
+            "prescription_id": rx_id, "medicine_name": "Aspirin",
+            "dosage": 1, "time_period": "morning",
+        }),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["success"] is True
+    logs = client.get("/packer/dispense_logs").get_json()
+    assert logs["count"] == 1
+    assert logs["data"][0]["time_period"] == "morning"
+
+
+def test_dispense_missing_field(client):
+    resp = client.post(
+        "/packer/dispense",
+        data=json.dumps({"patient_id": "000001"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    assert "Missing required field" in resp.get_json()["message"]
+
+
+def test_calibration_default_and_update(client):
+    body = client.get("/packer/settings/calibration").get_json()
+    assert body["success"] is True
+    assert body["data"]["reference_pill_diameter_mm"] == 9.0
+
+    client.post(
+        "/packer/settings/calibration",
+        data=json.dumps({"reference_pill_diameter_mm": 11.5}),
+        content_type="application/json",
+    )
+    updated = client.get("/packer/settings/calibration").get_json()
+    assert updated["data"]["reference_pill_diameter_mm"] == 11.5

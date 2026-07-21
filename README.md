@@ -134,6 +134,32 @@ python main.py
 
 数据库文件将自动创建在 `data/ezdose.db`
 
+## 🧪 运行测试
+
+项目使用 `pytest` 做后端 API 与鉴权的自动化测试。测试完全隔离,**不会触碰真实的 `data/ezdose.db`**:每个用例在临时目录里新建一次性 SQLite 库,测试结束即销毁。
+
+按 `AGENT.md` 约定,Python 操作应在 `pill-dispenser` 环境执行:
+
+```bash
+# 1. 安装测试依赖(含运行时依赖 flask/werkzeug/reportlab + pytest)
+conda run -n pill-dispenser python -m pip install -r requirements-dev.txt
+
+# 2. 运行全部测试
+conda run -n pill-dispenser python -m pytest
+
+# 只跑某个文件 / 某个用例
+conda run -n pill-dispenser python -m pytest tests/test_packer_api.py
+conda run -n pill-dispenser python -m pytest -k coalesce
+```
+
+测试覆盖范围:
+
+- **纯函数**(`tests/test_helpers.py`):患者 ID 6 位补零/递增/上限、文件扩展名校验、行转字典。
+- **设备同步 API**(`tests/test_packer_api.py`):患者/处方增查、字段别名兼容、`is_active` 过滤、发药记录、标定设置,以及 **COALESCE 保护专项**(设备回传 0/空值时不覆盖已校准的 `pill_size_area` / `image_resource_id`)。
+- **鉴权**(`tests/test_auth.py`):登录成功/失败、`login_required` 重定向、`permission_required` 返回 403。
+
+CI 已配置在 `.github/workflows/tests.yml`,push / PR 时在 Python 3.10 / 3.11 / 3.12 上自动运行。
+
 ## 🔍 故障排除
 
 ### 常见问题
