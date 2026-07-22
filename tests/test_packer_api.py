@@ -16,18 +16,18 @@ def _add_prescription(conn, patient_id="000001", **kw):
         "morning_dosage": 1, "noon_dosage": 0, "evening_dosage": 1,
         "meal_timing": "after_meal", "start_date": "2026-07-01",
         "duration_days": 7, "is_active": 1,
-        "pill_size_area": 500.0, "image_resource_id": "img_a.png",
+        "motor_speed": 0.5, "servo_angle": 0.7, "image_resource_id": "img_a.png",
     }
     fields.update(kw)
     cur = conn.execute(
         """INSERT INTO prescriptions
            (patient_id, medicine_name, morning_dosage, noon_dosage, evening_dosage,
-            meal_timing, start_date, duration_days, is_active, pill_size_area, image_resource_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            meal_timing, start_date, duration_days, is_active, motor_speed, servo_angle, image_resource_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (patient_id, fields["medicine_name"], fields["morning_dosage"],
          fields["noon_dosage"], fields["evening_dosage"], fields["meal_timing"],
          fields["start_date"], fields["duration_days"], fields["is_active"],
-         fields["pill_size_area"], fields["image_resource_id"]),
+         fields["motor_speed"], fields["servo_angle"], fields["image_resource_id"]),
     )
     conn.commit()
     return cur.lastrowid
@@ -113,45 +113,46 @@ def test_upload_prescription_insert_new(client, db_conn):
     assert row["morning_dosage"] == 2
 
 
-def test_coalesce_preserves_calibrated_pill_size(client, db_conn):
-    """Device sync must NOT overwrite calibrated pill_size_area when it sends 0/null.
-    This protects the on-device visual calibration (see AGENT.md)."""
+def test_coalesce_preserves_dispenser_settings(client, db_conn):
+    """Device sync must NOT overwrite motor_speed and servo_angle when it sends 0/null."""
     _add_patient(db_conn)
-    rx_id = _add_prescription(db_conn, pill_size_area=500.0, image_resource_id="cal.png")
+    rx_id = _add_prescription(db_conn, motor_speed=0.5, servo_angle=0.7, image_resource_id="cal.png")
 
-    # Device re-syncs the same prescription but sends 0 / empty for calibrated fields
+    # Device re-syncs the same prescription but sends 0 / empty for settings fields
     resp = client.post(
         "/packer/prescriptions/upload",
         data=json.dumps({"prescriptions": [
             {"id": rx_id, "patient_id": "000001", "medicine_name": "Aspirin",
-             "pill_size_area": 0, "image_resource_id": ""}
+             "motor_speed": 0, "servo_angle": 0, "image_resource_id": ""}
         ]}),
         content_type="application/json",
     )
     assert resp.status_code == 200
     row = db_conn.execute(
-        "SELECT pill_size_area, image_resource_id FROM prescriptions WHERE id=?", (rx_id,)
+        "SELECT motor_speed, servo_angle, image_resource_id FROM prescriptions WHERE id=?", (rx_id,)
     ).fetchone()
-    assert row["pill_size_area"] == 500.0        # preserved, not zeroed
+    assert row["motor_speed"] == 0.5            # preserved, not zeroed
+    assert row["servo_angle"] == 0.7            # preserved, not zeroed
     assert row["image_resource_id"] == "cal.png"  # preserved, not blanked
 
 
-def test_upload_prescription_updates_new_calibration(client, db_conn):
-    """When device DOES send a real calibrated value, it must be written."""
+def test_upload_prescription_updates_new_dispenser_settings(client, db_conn):
+    """When device DOES send real calibrated values, they must be written."""
     _add_patient(db_conn)
-    rx_id = _add_prescription(db_conn, pill_size_area=500.0)
+    rx_id = _add_prescription(db_conn, motor_speed=0.5, servo_angle=0.7)
     client.post(
         "/packer/prescriptions/upload",
         data=json.dumps({"prescriptions": [
             {"id": rx_id, "patient_id": "000001", "medicine_name": "Aspirin",
-             "pill_size_area": 777.5, "image_resource_id": "new.png"}
+             "motor_speed": 0.8, "servo_angle": 0.3, "image_resource_id": "new.png"}
         ]}),
         content_type="application/json",
     )
     row = db_conn.execute(
-        "SELECT pill_size_area, image_resource_id FROM prescriptions WHERE id=?", (rx_id,)
+        "SELECT motor_speed, servo_angle, image_resource_id FROM prescriptions WHERE id=?", (rx_id,)
     ).fetchone()
-    assert row["pill_size_area"] == 777.5
+    assert row["motor_speed"] == 0.8
+    assert row["servo_angle"] == 0.3
     assert row["image_resource_id"] == "new.png"
 
 

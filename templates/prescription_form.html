@@ -113,8 +113,9 @@
                        class="block w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-stone-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 font-semibold disabled:bg-stone-50 disabled:text-stone-400">
             </div>
 
-            <!-- Hidden area sync parameter (DO NOT REMOVE OR RENAME) -->
-            <input type="hidden" id="pill_size_area" name="pill_size_area" value="{{ prescription.pill_size_area if prescription and prescription.pill_size_area else 0 }}">
+            <!-- Hidden dispenser settings sync parameters -->
+            <input type="hidden" id="motor_speed" name="motor_speed" value="{{ prescription.motor_speed if prescription and prescription.motor_speed else 0 }}">
+            <input type="hidden" id="servo_angle" name="servo_angle" value="{{ prescription.servo_angle if prescription and prescription.servo_angle else 0 }}">
 
             <!-- Medicine Image Section -->
             <div class="space-y-4 pt-2 border-t border-line">

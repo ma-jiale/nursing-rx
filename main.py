@@ -174,8 +174,8 @@ app.secret_key = 'ezdose-secret-key-change-in-production'  # Session密钥，生
 # ========================================
 # Set to empty string for local development
 # Set to '/flask' for remote deployment to handle reverse proxy routing
-URL_PREFIX = ''  # Local development mode
-# URL_PREFIX = '/nursing-rx'  # Uncomment this line for remote deployment
+# URL_PREFIX = ''  # Local development mode
+URL_PREFIX = '/nursing-rx'  # Uncomment this line for remote deployment
 
 # ========================================
 # File Path Configuration
@@ -318,7 +318,8 @@ def init_db():
             duration_days INTEGER NOT NULL,
             last_dispensed_expiry_date DATE,
             is_active INTEGER DEFAULT 1,
-            pill_size_area REAL,
+            motor_speed REAL,
+            servo_angle REAL,
             image_resource_id TEXT,
             dosage_spec TEXT DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -326,11 +327,15 @@ def init_db():
         )
     ''')
     
-    # Migration: Add dosage_spec column if it doesn't exist
+    # Migration: Add columns if they don't exist
     cursor.execute("PRAGMA table_info(prescriptions)")
     columns = [row[1] for row in cursor.fetchall()]
     if 'dosage_spec' not in columns:
         cursor.execute("ALTER TABLE prescriptions ADD COLUMN dosage_spec TEXT DEFAULT ''")
+    if 'motor_speed' not in columns:
+        cursor.execute("ALTER TABLE prescriptions ADD COLUMN motor_speed REAL")
+    if 'servo_angle' not in columns:
+        cursor.execute("ALTER TABLE prescriptions ADD COLUMN servo_angle REAL")
     
     # System settings table - for calibration configuration
     cursor.execute('''
@@ -616,7 +621,7 @@ def index():
             "POST /packer/prescriptions/upload - Upload prescription data",
             "POST /packer/dispense - Record dispense log",
             "GET/POST /packer/settings/calibration - Calibration settings",
-            "POST /packer/prescription/<id>/pill-size - Update pill size area"
+            "POST /packer/prescription/<id>/dispenser-settings - Update dispenser settings"
         ]
     })
 
@@ -673,32 +678,39 @@ def calibration_settings():
     })
 
 
-@app.route('/packer/prescription/<int:prescription_id>/pill-size', methods=['POST'])
-def update_prescription_pill_size(prescription_id):
+@app.route('/packer/prescription/<int:prescription_id>/dispenser-settings', methods=['POST'])
+@app.route('/packer/prescription/<int:prescription_id>/pill-size', methods=['POST'])  # Deprecated alias
+def update_prescription_dispenser_settings(prescription_id):
     """
-    API endpoint to update pill size area for a specific prescription.
-    Called by the device after calibrating a new medicine.
+    API endpoint to update motor speed and servo angle for a specific prescription.
+    Called by the device after learning parameters from pulse width.
     
     Request Body:
-        - pill_size_area: Calibrated pill area in mm²
-    
-    Returns:
-        JSON response with success status
+        - motor_speed: Turntable motor speed (0.1 ~ 1.4)
+        - servo_angle: Servo aperture angle (0.1 ~ 1.0)
     """
     try:
-        data = request.get_json()
-        if not data or 'pill_size_area' not in data:
+        data = request.get_json() or {}
+        motor_speed = data.get('motor_speed')
+        servo_angle = data.get('servo_angle')
+        
+        # Backward compatibility fallback
+        if motor_speed is None and 'pill_size_area' in data:
+            motor_speed = 0.3
+            servo_angle = 0.7
+
+        if motor_speed is None or servo_angle is None:
             return jsonify({
                 "success": False,
-                "message": "pill_size_area is required"
+                "message": "motor_speed and servo_angle are required"
             }), 400
         
-        pill_size_area = float(data['pill_size_area'])
+        motor_speed = float(motor_speed)
+        servo_angle = float(servo_angle)
         
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if prescription exists
         prescription = cursor.execute(
             'SELECT id, medicine_name FROM prescriptions WHERE id = ?', 
             (prescription_id,)
@@ -711,26 +723,25 @@ def update_prescription_pill_size(prescription_id):
                 "message": f"Prescription {prescription_id} not found"
             }), 404
         
-        # Update pill size area
         cursor.execute(
-            'UPDATE prescriptions SET pill_size_area = ? WHERE id = ?',
-            (pill_size_area, prescription_id)
+            'UPDATE prescriptions SET motor_speed = ?, servo_angle = ? WHERE id = ?',
+            (motor_speed, servo_angle, prescription_id)
         )
         conn.commit()
         
-        logger.info(f"Updated pill_size_area for prescription {prescription_id} ({prescription['medicine_name']}): {pill_size_area:.2f} mm²")
+        logger.info(f"Updated dispenser settings for prescription {prescription_id} ({prescription['medicine_name']}): motor={motor_speed:.2f}, servo={servo_angle:.2f}")
         conn.close()
         
         return jsonify({
             "success": True,
-            "message": f"Pill size updated to {pill_size_area:.2f} mm²"
+            "message": f"Dispenser settings updated: motor={motor_speed:.2f}, servo={servo_angle:.2f}"
         })
         
     except Exception as e:
-        logger.error(f"Error updating pill size: {str(e)}")
+        logger.error(f"Error updating dispenser settings: {str(e)}")
         return jsonify({
             "success": False,
-            "message": f"Error updating pill size: {str(e)}"
+            "message": f"Error updating dispenser settings: {str(e)}"
         }), 500
 
 
@@ -746,21 +757,22 @@ def update_prescription_calibration(prescription_id):
         JSON response with success status and image_resource_id if image was uploaded
     """
     try:
-        # Get pill_size_area from form data
-        pill_size_area_str = request.form.get('pill_size_area')
-        if not pill_size_area_str:
-            return jsonify({
-                "success": False,
-                "message": "pill_size_area is required"
-            }), 400
+        # Get motor_speed and servo_angle from form data
+        motor_speed_str = request.form.get('motor_speed')
+        servo_angle_str = request.form.get('servo_angle')
         
-        pill_size_area = float(pill_size_area_str)
+        # Fallback for old forms sending pill_size_area
+        if not motor_speed_str and request.form.get('pill_size_area'):
+            motor_speed_str = "0.3"
+            servo_angle_str = "0.7"
+
+        motor_speed = float(motor_speed_str) if motor_speed_str else None
+        servo_angle = float(servo_angle_str) if servo_angle_str else None
         image_resource_id = None
         
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if prescription exists
         prescription = cursor.execute(
             'SELECT id, medicine_name FROM prescriptions WHERE id = ?', 
             (prescription_id,)
@@ -777,34 +789,31 @@ def update_prescription_calibration(prescription_id):
         if 'pill_image' in request.files:
             image_file = request.files['pill_image']
             if image_file and image_file.filename:
-                # Generate unique filename: pill_{prescription_id}_{timestamp}.jpg
                 filename = f"pill_{prescription_id}_{int(time.time())}.jpg"
                 filepath = os.path.join(UPLOAD_FOLDER, filename)
-                
-                # Ensure upload folder exists
                 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-                
-                # Save image file
                 image_file.save(filepath)
                 image_resource_id = filename
                 logger.info(f"Saved pill image: {filename}")
         
-        # Update database with pill_size_area and image_resource_id
-        if image_resource_id:
+        # Update database with motor_speed, servo_angle and image_resource_id
+        if image_resource_id and motor_speed is not None:
             cursor.execute(
-                'UPDATE prescriptions SET pill_size_area = ?, image_resource_id = ? WHERE id = ?',
-                (pill_size_area, image_resource_id, prescription_id)
+                'UPDATE prescriptions SET motor_speed = ?, servo_angle = ?, image_resource_id = ? WHERE id = ?',
+                (motor_speed, servo_angle, image_resource_id, prescription_id)
             )
-        else:
+        elif motor_speed is not None:
             cursor.execute(
-                'UPDATE prescriptions SET pill_size_area = ? WHERE id = ?',
-                (pill_size_area, prescription_id)
+                'UPDATE prescriptions SET motor_speed = ?, servo_angle = ? WHERE id = ?',
+                (motor_speed, servo_angle, prescription_id)
+            )
+        elif image_resource_id:
+            cursor.execute(
+                'UPDATE prescriptions SET image_resource_id = ? WHERE id = ?',
+                (image_resource_id, prescription_id)
             )
         
         conn.commit()
-        
-        logger.info(f"Updated calibration for prescription {prescription_id} ({prescription['medicine_name']}): "
-                    f"area={pill_size_area:.2f}mm², image={image_resource_id or 'none'}")
         conn.close()
         
         return jsonify({
@@ -967,12 +976,13 @@ def upload_prescriptions_for_dispensing():
             
             if rx_id:
                 # Update existing record
-                # NOTE: pill_size_area is preserved if client sends 0 or null
-                # This prevents overwriting the calibrated value during sync
-                client_pill_size = rx.get('pill_size_area')
-                client_pill_size_value = float(client_pill_size) if client_pill_size and float(client_pill_size) > 0 else None
+                # NOTE: motor_speed and servo_angle are preserved via COALESCE if client sends 0 or null
+                client_motor = rx.get('motor_speed')
+                client_motor_value = float(client_motor) if client_motor and float(client_motor) > 0 else None
+
+                client_servo = rx.get('servo_angle')
+                client_servo_value = float(client_servo) if client_servo and float(client_servo) > 0 else None
                 
-                # Preserve image_resource_id if client sends empty/null (same as pill_size_area)
                 client_image_id = rx.get('image_resource_id')
                 client_image_id_value = client_image_id if client_image_id else None
                 
@@ -982,7 +992,8 @@ def upload_prescriptions_for_dispensing():
                         noon_dosage = ?, evening_dosage = ?, meal_timing = ?,
                         start_date = ?, duration_days = ?, last_dispensed_expiry_date = ?,
                         is_active = ?, 
-                        pill_size_area = COALESCE(?, pill_size_area),
+                        motor_speed = COALESCE(?, motor_speed),
+                        servo_angle = COALESCE(?, servo_angle),
                         image_resource_id = COALESCE(?, image_resource_id),
                         dosage_spec = ?
                     WHERE id = ?
@@ -997,7 +1008,8 @@ def upload_prescriptions_for_dispensing():
                     int(rx.get('duration_days', 7)),
                     rx.get('last_dispensed_expiry_date'),
                     int(rx.get('is_active', 1)),
-                    client_pill_size_value,  # NULL preserves existing value via COALESCE
+                    client_motor_value,   # NULL preserves existing value via COALESCE
+                    client_servo_value,   # NULL preserves existing value via COALESCE
                     client_image_id_value,   # NULL preserves existing value via COALESCE
                     rx.get('dosage_spec', ''),
                     rx_id
@@ -1008,8 +1020,8 @@ def upload_prescriptions_for_dispensing():
                     INSERT INTO prescriptions (
                         patient_id, medicine_name, morning_dosage, noon_dosage, evening_dosage,
                         meal_timing, start_date, duration_days, last_dispensed_expiry_date,
-                        is_active, pill_size_area, image_resource_id, dosage_spec
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        is_active, motor_speed, servo_angle, image_resource_id, dosage_spec
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     patient_id,
                     medicine_name,
@@ -1021,7 +1033,8 @@ def upload_prescriptions_for_dispensing():
                     int(rx.get('duration_days', 7)),
                     rx.get('last_dispensed_expiry_date'),
                     int(rx.get('is_active', 1)),
-                    float(rx.get('pill_size_area', 0)) if rx.get('pill_size_area') else None,
+                    float(rx.get('motor_speed', 0)) if rx.get('motor_speed') else None,
+                    float(rx.get('servo_angle', 0)) if rx.get('servo_angle') else None,
                     rx.get('image_resource_id', ''),
                     rx.get('dosage_spec', '')
                 ))
@@ -1733,12 +1746,15 @@ def add_prescription():
             except ValueError:
                 duration_days = 7
                 
+        motor_speed = float(request.form['motor_speed']) if (request.form.get('motor_speed') and float(request.form['motor_speed']) > 0) else None
+        servo_angle = float(request.form['servo_angle']) if (request.form.get('servo_angle') and float(request.form['servo_angle']) > 0) else None
+
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO prescriptions (
                 patient_id, medicine_name, morning_dosage, noon_dosage, evening_dosage,
-                meal_timing, start_date, duration_days, is_active, pill_size_area, dosage_spec
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                meal_timing, start_date, duration_days, is_active, motor_speed, servo_angle, dosage_spec
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             request.form['patient_id'],
             request.form['medicine_name'],
@@ -1749,7 +1765,8 @@ def add_prescription():
             request.form['start_date'],
             duration_days,
             1 if request.form.get('is_active') else 0,
-            float(request.form['pill_size_area']) if (request.form.get('pill_size_area') and float(request.form['pill_size_area']) > 0) else 0,
+            motor_speed,
+            servo_angle,
             request.form.get('dosage_spec', '')
         ))
         conn.commit()
@@ -1811,7 +1828,6 @@ def edit_prescription(prescription_id):
 
     if request.method == 'POST':
         cursor = conn.cursor()
-        pill_size_area = float(request.form['pill_size_area']) if request.form.get('pill_size_area') else None
         
         # Determine the image_resource_id to save
         current_image_id = prescription['image_resource_id']
@@ -1858,10 +1874,13 @@ def edit_prescription(prescription_id):
             except ValueError:
                 duration_days = 7
                 
+        motor_speed = float(request.form['motor_speed']) if request.form.get('motor_speed') else None
+        servo_angle = float(request.form['servo_angle']) if request.form.get('servo_angle') else None
+        
         cursor.execute('''
             UPDATE prescriptions SET
                 patient_id=?, medicine_name=?, morning_dosage=?, noon_dosage=?, evening_dosage=?,
-                meal_timing=?, start_date=?, duration_days=?, is_active=?, pill_size_area=?,
+                meal_timing=?, start_date=?, duration_days=?, is_active=?, motor_speed=?, servo_angle=?,
                 image_resource_id=?, dosage_spec=?
             WHERE id=?
         ''', (
@@ -1874,7 +1893,8 @@ def edit_prescription(prescription_id):
             request.form['start_date'],
             duration_days,
             1 if request.form.get('is_active') else 0,
-            pill_size_area,
+            motor_speed,
+            servo_angle,
             image_resource_id,
             request.form.get('dosage_spec', ''),
             prescription_id
@@ -2078,4 +2098,4 @@ if __name__ == '__main__':
     # port=5050 runs on custom port (default Flask port is 5000)
     # debug=True enables auto-reload on code changes and detailed error messages
     # WARNING: Never use debug=True in production deployment!
-    app.run(host='0.0.0.0', port=5050, debug=True)
+    app.run(host='0.0.0.0', port=5068, debug=True)
