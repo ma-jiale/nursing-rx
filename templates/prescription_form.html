@@ -157,7 +157,7 @@
                         class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 active:bg-brand-700">
                     {{ "更新" if prescription else "确认新增" }}
                 </button>
-                <a href="{{ URL_PREFIX }}{{ url_for('manage_prescriptions', patient_id=default_patient_id) }}" 
+                <a href="{{ URL_PREFIX }}{{ url_for('manage_prescriptions', patient_id=default_patient_id) if default_patient_id else url_for('manage_prescriptions') }}" 
                    class="inline-flex items-center justify-center rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50 transition focus:outline-none focus:ring-2 focus:ring-brand-500/20">
                     取消
                 </a>
