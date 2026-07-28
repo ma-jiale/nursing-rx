@@ -4,6 +4,7 @@ import time
 import sqlite3
 import os
 import logging
+import re
 from logging.handlers import RotatingFileHandler
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -237,7 +238,55 @@ def get_db_connection():
     """
     conn = sqlite3.connect(DATABASE_FILE)
     conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
     return conn
+
+
+def normalize_rfid_uid(value):
+    """Normalize a hardware RFID UID to the canonical uppercase hex form."""
+    raw = str(value or '').strip()
+    if raw.upper().startswith('UID:'):
+        raw = raw[4:]
+    normalized = ''.join(raw.split()).upper()
+    if not normalized:
+        raise ValueError('RFID UID 不能为空')
+    if len(normalized) > 64 or not re.fullmatch(r'[0-9A-F]+', normalized):
+        raise ValueError(f'RFID UID "{value}" 格式无效，只允许十六进制字符')
+    return normalized
+
+
+def parse_rfid_uids(value):
+    """Parse comma/newline/whitespace separated UIDs and remove duplicates."""
+    if not str(value or '').strip():
+        return []
+
+    result = []
+    seen = set()
+    for item in re.split(r'[,;\s]+', str(value).strip()):
+        if not item:
+            continue
+        uid = normalize_rfid_uid(item)
+        if uid not in seen:
+            seen.add(uid)
+            result.append(uid)
+    return result
+
+
+def sync_patient_pill_boxes(conn, patient_id, rfid_uids):
+    """Replace a patient's RFID bindings while preserving global UID uniqueness."""
+    for uid in rfid_uids:
+        owner = conn.execute(
+            'SELECT patient_id FROM pill_boxes WHERE rfid_uid = ?', (uid,)
+        ).fetchone()
+        if owner and owner['patient_id'] != patient_id:
+            raise ValueError(f'RFID UID {uid} 已绑定到患者 {owner["patient_id"]}')
+
+    conn.execute('DELETE FROM pill_boxes WHERE patient_id = ?', (patient_id,))
+    for uid in rfid_uids:
+        conn.execute('''
+            INSERT INTO pill_boxes (patient_id, rfid_uid, box_type, is_active)
+            VALUES (?, ?, 'GENERAL', 1)
+        ''', (patient_id, uid))
 
 
 def generate_next_patient_id():
@@ -302,6 +351,24 @@ def init_db():
             profile_photo_resource_id TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
+    ''')
+
+    # Physical pill boxes. A patient may use multiple RFID-tagged box shapes.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pill_boxes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_id TEXT NOT NULL,
+            rfid_uid TEXT NOT NULL UNIQUE,
+            box_type TEXT NOT NULL DEFAULT 'GENERAL',
+            display_name TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_pill_boxes_patient_id
+        ON pill_boxes(patient_id)
     ''')
     
     # Prescriptions table
@@ -616,6 +683,7 @@ def index():
         "available_endpoints": [
             "GET / - Server status",
             "GET /packer/patients - Get patient list",
+            "GET /packer/pill-boxes - Get active RFID pill-box bindings",
             "GET /packer/prescriptions - Get prescription list",
             "POST /packer/patients/upload - Upload patient data",
             "POST /packer/prescriptions/upload - Upload prescription data",
@@ -850,6 +918,29 @@ def get_patients_for_dispensing():
         "success": True,
         "data": patients_list,
         "count": len(patients_list)
+    })
+
+
+@app.route('/packer/pill-boxes', methods=['GET'])
+def get_pill_boxes_for_dispensing():
+    """Return active RFID-to-patient bindings for the Windows client."""
+    conn = get_db_connection()
+    boxes = conn.execute('''
+        SELECT pb.id, pb.patient_id, pb.rfid_uid, pb.box_type,
+               pb.display_name, pb.is_active, pb.created_at,
+               pt.patient_name, pt.bed_number
+        FROM pill_boxes pb
+        JOIN patients pt ON pt.id = pb.patient_id
+        WHERE pb.is_active = 1
+        ORDER BY pb.patient_id, pb.id
+    ''').fetchall()
+    conn.close()
+
+    boxes_list = [dict_from_row(box) for box in boxes]
+    return jsonify({
+        "success": True,
+        "data": boxes_list,
+        "count": len(boxes_list)
     })
 
 
@@ -1354,12 +1445,21 @@ def manage_patients():
     if search_query:
         # Search by name or bed number
         patients = conn.execute('''
-            SELECT * FROM patients 
-            WHERE patient_name LIKE ? OR bed_number LIKE ?
-            ORDER BY id
+            SELECT p.*, GROUP_CONCAT(pb.rfid_uid, ', ') AS rfid_uids
+            FROM patients p
+            LEFT JOIN pill_boxes pb ON pb.patient_id = p.id AND pb.is_active = 1
+            WHERE p.patient_name LIKE ? OR p.bed_number LIKE ?
+            GROUP BY p.id
+            ORDER BY p.id
         ''', (f'%{search_query}%', f'%{search_query}%')).fetchall()
     else:
-        patients = conn.execute('SELECT * FROM patients ORDER BY id').fetchall()
+        patients = conn.execute('''
+            SELECT p.*, GROUP_CONCAT(pb.rfid_uid, ', ') AS rfid_uids
+            FROM patients p
+            LEFT JOIN pill_boxes pb ON pb.patient_id = p.id AND pb.is_active = 1
+            GROUP BY p.id
+            ORDER BY p.id
+        ''').fetchall()
     
     conn.close()
     
@@ -1514,6 +1614,10 @@ def add_patient():
     """
     if request.method == 'POST':
         bed_number = request.form.get('bed_number', '').strip()
+        try:
+            rfid_uids = parse_rfid_uids(request.form.get('rfid_uids', ''))
+        except ValueError as exc:
+            return render_template('patient_form.html', patient=dict(request.form), error=str(exc))
         
         # Check for duplicate bed number
         if bed_number:
@@ -1523,7 +1627,7 @@ def add_patient():
             ).fetchone()
             conn.close()
             if existing:
-                return render_template('patient_form.html', patient=None, 
+                return render_template('patient_form.html', patient=dict(request.form),
                                      error=f'床号 "{bed_number}" 已被使用，请选择其他床号')
         
         image_filename = ""
@@ -1541,16 +1645,22 @@ def add_patient():
         # Generate 6-digit zero-padded patient ID for barcode compatibility
         new_patient_id = generate_next_patient_id()
         
-        cursor.execute('''
-            INSERT INTO patients (id, patient_name, bed_number, profile_photo_resource_id)
-            VALUES (?, ?, ?, ?)
-        ''', (
-            new_patient_id,
-            request.form['patient_name'],
-            bed_number,
-            image_filename
-        ))
-        conn.commit()
+        try:
+            cursor.execute('''
+                INSERT INTO patients (id, patient_name, bed_number, profile_photo_resource_id)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                new_patient_id,
+                request.form['patient_name'],
+                bed_number,
+                image_filename
+            ))
+            sync_patient_pill_boxes(conn, new_patient_id, rfid_uids)
+            conn.commit()
+        except ValueError as exc:
+            conn.rollback()
+            conn.close()
+            return render_template('patient_form.html', patient=dict(request.form), error=str(exc))
         conn.close()
         
         log_operation('add', 'patient', '患者', target_id=new_patient_id, target_name=request.form['patient_name'],
@@ -1576,6 +1686,13 @@ def edit_patient(patient_id):
 
     if request.method == 'POST':
         bed_number = request.form.get('bed_number', '').strip()
+        try:
+            rfid_uids = parse_rfid_uids(request.form.get('rfid_uids', ''))
+        except ValueError as exc:
+            patient_data = dict_from_row(patient)
+            patient_data.update(dict(request.form))
+            conn.close()
+            return render_template('patient_form.html', patient=patient_data, error=str(exc))
         
         # Check for duplicate bed number (excluding current patient)
         if bed_number:
@@ -1583,8 +1700,10 @@ def edit_patient(patient_id):
                 'SELECT id FROM patients WHERE bed_number = ? AND id != ?', (bed_number, patient_id)
             ).fetchone()
             if existing:
+                patient_data = dict_from_row(patient)
+                patient_data.update(dict(request.form))
                 conn.close()
-                return render_template('patient_form.html', patient=dict_from_row(patient), 
+                return render_template('patient_form.html', patient=patient_data,
                                      error=f'床号 "{bed_number}" 已被使用，请选择其他床号')
         
         image_filename = patient['profile_photo_resource_id']
@@ -1605,16 +1724,24 @@ def edit_patient(patient_id):
                 image_filename = new_filename
         
         cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE patients SET patient_name=?, bed_number=?, profile_photo_resource_id=?
-            WHERE id=?
-        ''', (
-            request.form['patient_name'],
-            bed_number,
-            image_filename,
-            patient_id
-        ))
-        conn.commit()
+        try:
+            cursor.execute('''
+                UPDATE patients SET patient_name=?, bed_number=?, profile_photo_resource_id=?
+                WHERE id=?
+            ''', (
+                request.form['patient_name'],
+                bed_number,
+                image_filename,
+                patient_id
+            ))
+            sync_patient_pill_boxes(conn, patient_id, rfid_uids)
+            conn.commit()
+        except ValueError as exc:
+            conn.rollback()
+            patient_data = dict_from_row(patient)
+            patient_data.update(dict(request.form))
+            conn.close()
+            return render_template('patient_form.html', patient=patient_data, error=str(exc))
         conn.close()
         
         log_operation('edit', 'patient', '患者', target_id=patient_id, target_name=request.form['patient_name'],
@@ -1622,8 +1749,14 @@ def edit_patient(patient_id):
         
         return redirect(URL_PREFIX + url_for('manage_patients'))
     
+    patient_data = dict_from_row(patient)
+    box_rows = conn.execute(
+        'SELECT rfid_uid FROM pill_boxes WHERE patient_id = ? AND is_active = 1 ORDER BY id',
+        (patient_id,)
+    ).fetchall()
+    patient_data['rfid_uids'] = '\n'.join(row['rfid_uid'] for row in box_rows)
     conn.close()
-    return render_template('patient_form.html', patient=dict_from_row(patient))
+    return render_template('patient_form.html', patient=patient_data)
 
 
 @app.route('/admin/patients/delete/<patient_id>')
@@ -1650,6 +1783,8 @@ def delete_patient(patient_id):
     conn.execute('DELETE FROM prescriptions WHERE patient_id = ?', (patient_id,))
     # Delete dispense logs
     conn.execute('DELETE FROM dispense_logs WHERE patient_id = ?', (patient_id,))
+    # Delete RFID pill-box bindings
+    conn.execute('DELETE FROM pill_boxes WHERE patient_id = ?', (patient_id,))
     # Delete patient
     conn.execute('DELETE FROM patients WHERE id = ?', (patient_id,))
     

@@ -15,6 +15,7 @@ EZ-Dose Server
 
 ### 🔧 分药机系统API
 - `GET /packer/patients` - 获取所有患者信息
+- `GET /packer/pill-boxes` - 获取有效的 RFID UID 与患者绑定关系
 - `GET /packer/prescriptions` - 获取所有有效处方数据
 - `POST /packer/patients/upload` - 批量上传患者信息
 - `POST /packer/prescriptions/upload` - 批量上传处方数据
@@ -24,7 +25,7 @@ EZ-Dose Server
 ### 🌐 Web管理后台
 - `/admin` - 管理后台首页（含统计数据）
 - `/admin/users` - 用户管理
-- `/admin/patients` - 患者管理
+- `/admin/patients` - 患者管理，并为同一患者绑定一个或多个药盒 RFID UID
 - `/admin/prescriptions` - 处方管理
 - `/admin/dispense_logs` - 发药记录查看
 
@@ -79,6 +80,19 @@ server/
 | bed_number | TEXT | 床号 |
 | profile_photo_resource_id | TEXT | 照片文件名 |
 | created_at | DATETIME | 创建时间 |
+
+### pill_boxes 表 - RFID 药盒绑定
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER | 主键，自增 |
+| patient_id | TEXT | 患者 ID（外键） |
+| rfid_uid | TEXT | 硬件上报的十六进制 UID，全局唯一 |
+| box_type | TEXT | 药盒类型，默认 `GENERAL` |
+| display_name | TEXT | 可选显示名称 |
+| is_active | INTEGER | 是否有效 (0/1) |
+| created_at | DATETIME | 创建时间 |
+
+RFID UID 在患者新增/编辑页面录入，可按换行、逗号或空格分隔。服务器会去除 `UID:` 前缀、统一转换为大写十六进制，并阻止同一 UID 绑定到不同患者。
 
 ### prescriptions 表 - 处方信息
 | 字段 | 类型 | 说明 |
@@ -155,7 +169,7 @@ conda run -n pill-dispenser python -m pytest -k coalesce
 测试覆盖范围:
 
 - **纯函数**(`tests/test_helpers.py`):患者 ID 6 位补零/递增/上限、文件扩展名校验、行转字典。
-- **设备同步 API**(`tests/test_packer_api.py`):患者/处方增查、字段别名兼容、`is_active` 过滤、发药记录、标定设置,以及 **COALESCE 保护专项**(设备回传 0/空值时不覆盖已校准的 `pill_size_area` / `image_resource_id`)。
+- **设备同步 API**(`tests/test_packer_api.py`):患者/处方增查、RFID 药盒绑定与唯一性、字段别名兼容、`is_active` 过滤、发药记录、标定设置,以及 **COALESCE 保护专项**(设备回传 0/空值时不覆盖已校准的 `pill_size_area` / `image_resource_id`)。
 - **鉴权**(`tests/test_auth.py`):登录成功/失败、`login_required` 重定向、`permission_required` 返回 403。
 
 CI 已配置在 `.github/workflows/tests.yml`,push / PR 时在 Python 3.10 / 3.11 / 3.12 上自动运行。
@@ -208,4 +222,4 @@ npm run build:css
 - **解决**：在编写 Jinja2 提示框模板时，应通过合并赋值同时支持两者的渲染逻辑，以增强前后端兼容性：
   ```html
   {% set display_error = error or (get_flashed_messages(category_filter=["error"])[0] if get_flashed_messages(category_filter=["error"]) else None) %}
-  ```
+  ```

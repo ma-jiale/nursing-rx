@@ -58,6 +58,66 @@ def test_get_patients_returns_rows(client, db_conn):
     assert body["data"][0]["patient_name"] == "Li"
 
 
+def test_get_pill_boxes_returns_active_rfid_bindings(client, db_conn):
+    _add_patient(db_conn, "000001", "Li")
+    db_conn.execute(
+        "INSERT INTO pill_boxes (patient_id, rfid_uid) VALUES (?, ?)",
+        ("000001", "5303859E740001"),
+    )
+    db_conn.commit()
+
+    resp = client.get("/packer/pill-boxes")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["count"] == 1
+    assert body["data"][0]["rfid_uid"] == "5303859E740001"
+    assert body["data"][0]["patient_id"] == "000001"
+
+
+def test_patient_form_binds_and_normalizes_multiple_rfid_uids(auth_client, db_conn):
+    resp = auth_client.post(
+        "/admin/patients/add",
+        data={
+            "patient_name": "Wang",
+            "bed_number": "7",
+            "rfid_uids": "uid:5303859e740001\nA1B2C3D4",
+        },
+    )
+    assert resp.status_code == 302
+
+    rows = db_conn.execute(
+        "SELECT patient_id, rfid_uid FROM pill_boxes ORDER BY id"
+    ).fetchall()
+    assert [(row["patient_id"], row["rfid_uid"]) for row in rows] == [
+        ("000001", "5303859E740001"),
+        ("000001", "A1B2C3D4"),
+    ]
+
+
+def test_rfid_uid_cannot_be_bound_to_two_patients(auth_client, db_conn):
+    _add_patient(db_conn, "000001", "Li")
+    db_conn.execute(
+        "INSERT INTO pill_boxes (patient_id, rfid_uid) VALUES (?, ?)",
+        ("000001", "5303859E740001"),
+    )
+    db_conn.commit()
+
+    resp = auth_client.post(
+        "/admin/patients/add",
+        data={
+            "patient_name": "Wang",
+            "bed_number": "8",
+            "rfid_uids": "5303859E740001",
+        },
+    )
+    assert resp.status_code == 200
+    assert "已绑定到患者 000001" in resp.get_data(as_text=True)
+    assert db_conn.execute(
+        "SELECT COUNT(*) FROM patients WHERE patient_name = 'Wang'"
+    ).fetchone()[0] == 0
+
+
 def test_upload_patients_camelcase_alias(client):
     resp = client.post(
         "/packer/patients/upload",

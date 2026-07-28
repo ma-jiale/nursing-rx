@@ -43,6 +43,14 @@
                        class="block w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">
             </div>
 
+            <!-- RFID pill-box bindings -->
+            <div class="space-y-1.5">
+                <label for="rfid_uids" class="block text-sm font-medium text-stone-700">药盒 RFID UID</label>
+                <textarea id="rfid_uids" name="rfid_uids" rows="3" placeholder="每行一个 UID，例如：5303859E740001"
+                          class="block w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 font-mono text-sm text-stone-900 placeholder:text-stone-400 transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">{{ patient.rfid_uids if patient and patient.rfid_uids else '' }}</textarea>
+                <p class="text-xs text-stone-500">支持为同一患者绑定多个不同形态的药盒；UID 只能绑定给一位患者。</p>
+            </div>
+
             <!-- Patient Photo Upload -->
             <div class="space-y-2.5">
                 <label for="patientImage" class="block text-sm font-medium text-stone-700">患者头像照片</label>
